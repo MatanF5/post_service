@@ -6,12 +6,14 @@ import { Comment, CommentSchema } from './schemas/comment.schema';
 import { Post, PostSchema } from 'src/posts/schemas/post.schema';
 import { PostsModule } from 'src/posts/posts.module';
 import { PostsService } from 'src/posts/posts.service';
+import { KafkaModule } from 'src/kafka/kafka.module';
 @Module({
   imports: [
     MongooseModule.forFeature([
       { name: Comment.name, schema: CommentSchema },
       { name: Post.name, schema: PostSchema },
     ]),
+    KafkaModule
   ],
   providers: [CommentsService, PostsService],
   controllers: [CommentsController],

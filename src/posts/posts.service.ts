@@ -4,20 +4,37 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Post } from './schemas/post.schema';
 import { Comment } from '../comments/schemas/comment.schema';
+import { KafkaService } from '../kafka/kafka.service';
 
 @Injectable()
 export class PostsService {
   constructor(
     @InjectModel('Post') private readonly postModel: Model<Post>,
     @InjectModel('Comment') private readonly commentModel: Model<Comment>,
+    private readonly kafkaService: KafkaService,
   ) {}
 
   async create(createPostDto: CreatePostDto, userId: string) {
-    const post = new this.postModel({
-      ...createPostDto,
-      userId: new Types.ObjectId(userId),
-    });
-    return post.save();
+    try {
+      const post = new this.postModel({
+        ...createPostDto,
+        userId: new Types.ObjectId(userId),
+      });
+      const savedPost = await post.save();
+      
+      // Only emit event after successful save
+      await this.kafkaService.emitPostCreated({
+        postId: savedPost._id,
+        userId: savedPost.userId,
+        content: savedPost.content,
+        createdAt: savedPost.createdAt,
+      });
+
+      return savedPost;
+    } catch (error) {
+      // If anything fails, the event won't be emitted
+      throw error;
+    }
   }
 
   async getPostsByUserId(userId: string) {
@@ -38,18 +55,35 @@ export class PostsService {
   }
 
   async like(id: string, userId: string) {
-    const userIdObj = new Types.ObjectId(userId);
-    const post = await this.postModel.findOneAndUpdate(
-      {
-        _id: new Types.ObjectId(id),
-        likes: { $ne: userIdObj }, // Only update if user hasn't liked
-      },
-      {
-        $addToSet: { likes: userIdObj },
-      },
-      { new: true },
-    );
-    return post?.likes.length || 0;
+    try {
+      const userIdObj = new Types.ObjectId(userId);
+      const post = await this.postModel.findOneAndUpdate(
+        {
+          _id: new Types.ObjectId(id),
+          likes: { $ne: userIdObj },
+        },
+        {
+          $addToSet: { likes: userIdObj },
+        },
+        { new: true },
+      );
+
+      if (!post) {
+        throw new NotFoundException('Post not found or already liked');
+      }
+
+      // Only emit event after successful update
+      await this.kafkaService.emitPostLiked({
+        postId: post._id,
+        userId: userIdObj,
+        createdAt: new Date(),
+      });
+
+      return post.likes.length || 0;
+    } catch (error) {
+      // If anything fails, the event won't be emitted
+      throw error;
+    }
   }
 
   async unlike(id: string, userId: string) {
@@ -69,6 +103,7 @@ export class PostsService {
 
   async createComment(postId: string, userId: string, content: string) {
     const session = await this.postModel.startSession();
+    
     try {
       await session.withTransaction(async () => {
         // First verify the post exists
@@ -81,10 +116,10 @@ export class PostsService {
         }
 
         // Create the comment
-        const [newComment] = await this.commentModel.create(
+        const [comment] = await this.commentModel.create(
           [
             {
-              postId: post._id, // Use the actual post's _id
+              postId: post._id,
               userId: new Types.ObjectId(userId),
               content,
             },
@@ -94,17 +129,29 @@ export class PostsService {
 
         // Update the post with the new comment ID
         const updatedPost = await this.postModel.findOneAndUpdate(
-          { _id: post._id }, // Use the actual post's _id
-          { $push: { comments: newComment._id } },
+          { _id: post._id },
+          { $push: { comments: comment._id } },
           { session, new: true },
         );
 
         if (!updatedPost) {
           throw new Error('Failed to update post with comment');
         }
+
+        // Emit event inside transaction
+        await this.kafkaService.emitCommentAdded({
+          postId: post._id,
+          commentId: comment._id,
+          userId: comment.userId,
+          content: comment.content,
+          createdAt: comment.createdAt,
+        });
       });
 
       return { success: true };
+    } catch (error) {
+      // If anything fails, the event won't be emitted
+      throw error;
     } finally {
       await session.endSession();
     }

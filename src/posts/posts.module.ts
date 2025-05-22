@@ -5,6 +5,7 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { Post, PostSchema } from './schemas/post.schema';
 import { Comment, CommentSchema } from '../comments/schemas/comment.schema';
 import { CommentsModule } from 'src/comments/comments.module';
+import { KafkaModule } from '../kafka/kafka.module';
 
 @Module({
   imports: [
@@ -13,6 +14,7 @@ import { CommentsModule } from 'src/comments/comments.module';
       { name: Comment.name, schema: CommentSchema }
     ]),
     CommentsModule,
+    KafkaModule,
   ],
   providers: [PostsService],
   controllers: [PostsController],
