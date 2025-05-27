@@ -25,9 +25,9 @@ export class PostsController {
     return this.postsService.create(createPostDto, req.user.userId);
   }
 
-  @Get('userPosts')
-  getPostsByUserId(@Request() req) {
-    return this.postsService.getPostsByUserId(req.user.userId);
+  @Get('userPosts/:id')
+  getPostsByUserId(@Param('id') id: string) {
+    return this.postsService.getPostsByUserId(id);
   }
 
   @Get(':id')
